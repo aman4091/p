@@ -74,3 +74,4 @@ p.py
 # Scripts directory with generated content
 scripts/*.txt
 token.pickle
+k.py
