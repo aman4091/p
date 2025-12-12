@@ -5268,43 +5268,61 @@ class WorkingF5Bot:
             return resp
 
         last_err = None
+        gofile_link = None
         for attempt in range(3):
             try:
                 # 1) New API
                 r = _try_new_api()
-                if r.status_code == 200 and r.headers.get("content-type",""").startswith("application/json"):
+                if r.status_code == 200 and r.headers.get("content-type","").startswith("application/json"):
                     j = r.json()
                     d = j.get("data", {}) if isinstance(j, dict) else {}
                     link = d.get("downloadPage")
                     if link:
-                        return link
+                        gofile_link = link
+                        break
                 # Fall back if 5xx or missing link
                 # 2) Legacy server API
                 r = _try_legacy_api()
-                if r.status_code == 200 and r.headers.get("content-type",""").startswith("application/json"):
+                if r.status_code == 200 and r.headers.get("content-type","").startswith("application/json"):
                     j = r.json()
                     # legacy returns {"status":"ok","data":{"downloadPage": "..."}}
                     if j.get("status") == "ok":
                         d = j.get("data", {})
                         link = d.get("downloadPage")
                         if link:
-                            return link
+                            gofile_link = link
+                            break
                 last_err = f"GoFile upload failed (attempt {attempt+1}): {r.status_code} {r.text[:200]}"
             except Exception as e:
                 last_err = f"{type(e).__name__}: {e}"
             # backoff
             time.sleep(1.5 * (2 ** attempt))
 
-        print(f"❌ GoFile single-upload error: {last_err}")
-        return None
+        if not gofile_link:
+            print(f"❌ GoFile single-upload error: {last_err}")
+
+        # Also upload to Contabo (only for raw files)
+        if "_raw.wav" in file_path:
+            contabo_link = await self.upload_to_contabo(file_path)
+            if contabo_link:
+                print(f"✅ Contabo: {contabo_link}")
+            else:
+                print(f"❌ Contabo upload failed for {os.path.basename(file_path)}")
+
+        return gofile_link
 
     async def upload_to_contabo(self, file_path):
         """
         Upload file to Contabo file server.
         Returns the download URL or None on failure.
         """
+        print(f"🔍 Contabo check - URL: {CONTABO_URL}, API Key: {'SET' if CONTABO_API_KEY else 'NOT SET'}")
+
         if not CONTABO_URL or not CONTABO_API_KEY:
-            print("⚠️ Contabo credentials not configured")
+            print("❌ Contabo credentials not configured in /workspace/p.py")
+            print("   Add these to p.py:")
+            print("   CONTABO_URL = 'http://69.62.157.161:8000'")
+            print("   CONTABO_API_KEY = 'tts-secret-key-2024'")
             return None
 
         try:
@@ -5312,6 +5330,10 @@ class WorkingF5Bot:
             upload_url = f"{CONTABO_URL}/upload/external-audio"
 
             print(f"📤 Uploading to Contabo: {filename}")
+            print(f"   URL: {upload_url}")
+
+            file_size = os.path.getsize(file_path)
+            print(f"   File size: {file_size / (1024*1024):.2f} MB")
 
             with open(file_path, "rb") as f:
                 resp = requests.post(
@@ -5321,21 +5343,40 @@ class WorkingF5Bot:
                     timeout=300
                 )
 
+            print(f"   Response status: {resp.status_code}")
+
             if resp.status_code == 200:
-                data = resp.json()
-                download_url = data.get("url") or data.get("download_url") or data.get("link")
-                if download_url:
-                    print(f"✅ Contabo upload success: {download_url}")
-                    return download_url
-                else:
-                    print(f"✅ Contabo upload success (no URL in response)")
-                    return f"{CONTABO_URL}/audio/{filename}"
+                try:
+                    data = resp.json()
+                    print(f"   Response data: {data}")
+                    download_url = data.get("url") or data.get("download_url") or data.get("link") or data.get("file_url")
+                    if download_url:
+                        print(f"✅ Contabo upload success: {download_url}")
+                        return download_url
+                    else:
+                        # Construct URL if not in response
+                        constructed_url = f"{CONTABO_URL}/audio/{filename}"
+                        print(f"✅ Contabo upload success: {constructed_url}")
+                        return constructed_url
+                except:
+                    constructed_url = f"{CONTABO_URL}/audio/{filename}"
+                    print(f"✅ Contabo upload success: {constructed_url}")
+                    return constructed_url
             else:
-                print(f"❌ Contabo upload failed: {resp.status_code} - {resp.text[:200]}")
+                print(f"❌ Contabo upload failed: {resp.status_code}")
+                print(f"   Response: {resp.text[:500]}")
                 return None
 
+        except requests.exceptions.Timeout:
+            print(f"❌ Contabo upload timeout (300s)")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Contabo connection error: {e}")
+            return None
         except Exception as e:
-            print(f"❌ Contabo upload error: {e}")
+            print(f"❌ Contabo upload error: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _classify_variant(self, path: str) -> str:
