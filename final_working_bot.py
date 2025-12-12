@@ -22,6 +22,16 @@ from dotenv import load_dotenv
 from supabase_client import SupabaseClient
 from transcribe_helper import get_youtube_transcript, SupaDataError
 from youtube_processor import YouTubeChannelProcessor, YouTubeProcessorError
+
+# Import Contabo credentials from parent p.py
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from p import CONTABO_URL, CONTABO_API_KEY
+except ImportError:
+    CONTABO_URL = None
+    CONTABO_API_KEY = None
+    print("⚠️ Contabo credentials not found in p.py")
 # Load environment variables from .env file
 load_dotenv()
 
@@ -2634,35 +2644,36 @@ class WorkingF5Bot:
                     shutil.copy(raw_output, enhanced_output)
                     print(f"✅ Using raw audio as enhanced (fallback)")
 
-            # Upload both files
+            # Upload only RAW file to Gofile and Contabo
             links = []
 
-            await send_msg(f"📤 Uploading audio files to Gofile...")
+            if os.path.exists(raw_output):
+                filename = os.path.basename(raw_output)
+                size_mb = os.path.getsize(raw_output) // (1024 * 1024)
 
-            for file_path in [raw_output, enhanced_output]:
-                if os.path.exists(file_path):
-                    filename = os.path.basename(file_path)
-                    size_mb = os.path.getsize(file_path) // (1024 * 1024)
+                await send_msg(f"📤 Uploading {filename} ({size_mb} MB)...")
 
-                    print(f"📤 Uploading {filename} ({size_mb} MB)...")
-                    await send_msg(f"📤 Uploading {filename}...")
-
-                    # Upload to Gofile
-                    link = await self.upload_single_to_gofile(file_path)
-
-                    if link:
-                        print(f"✅ Upload successful: {link}")
-                        # Send without parse_mode to avoid Markdown errors with URLs
-                        await send_msg(
-                            f"🔗 {filename} ({size_mb} MB)\n{link}"
-                        )
-                        links.append(link)
-                    else:
-                        print(f"❌ Upload failed for {filename}")
-                        await send_msg(f"⚠️ Failed to upload {filename}")
+                # Upload to Gofile
+                gofile_link = await self.upload_single_to_gofile(raw_output)
+                if gofile_link:
+                    print(f"✅ Gofile upload successful: {gofile_link}")
+                    await send_msg(f"🔗 Gofile: {gofile_link}")
+                    links.append(gofile_link)
                 else:
-                    print(f"❌ File not found: {file_path}")
-                    await send_msg(f"❌ File not found: {os.path.basename(file_path)}")
+                    print(f"❌ Gofile upload failed")
+                    await send_msg(f"⚠️ Gofile upload failed")
+
+                # Upload to Contabo
+                contabo_link = await self.upload_to_contabo(raw_output)
+                if contabo_link:
+                    print(f"✅ Contabo upload successful: {contabo_link}")
+                    await send_msg(f"🔗 Contabo: {contabo_link}")
+                    links.append(contabo_link)
+                else:
+                    print(f"⚠️ Contabo upload failed (optional)")
+            else:
+                print(f"❌ Raw file not found: {raw_output}")
+                await send_msg(f"❌ Raw file not found")
 
             return links
 
@@ -5283,6 +5294,46 @@ class WorkingF5Bot:
 
         print(f"❌ GoFile single-upload error: {last_err}")
         return None
+
+    async def upload_to_contabo(self, file_path):
+        """
+        Upload file to Contabo file server.
+        Returns the download URL or None on failure.
+        """
+        if not CONTABO_URL or not CONTABO_API_KEY:
+            print("⚠️ Contabo credentials not configured")
+            return None
+
+        try:
+            filename = os.path.basename(file_path)
+            upload_url = f"{CONTABO_URL}/upload/external-audio"
+
+            print(f"📤 Uploading to Contabo: {filename}")
+
+            with open(file_path, "rb") as f:
+                resp = requests.post(
+                    upload_url,
+                    headers={"x-api-key": CONTABO_API_KEY},
+                    files={"file": (filename, f, "audio/wav")},
+                    timeout=300
+                )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                download_url = data.get("url") or data.get("download_url") or data.get("link")
+                if download_url:
+                    print(f"✅ Contabo upload success: {download_url}")
+                    return download_url
+                else:
+                    print(f"✅ Contabo upload success (no URL in response)")
+                    return f"{CONTABO_URL}/audio/{filename}"
+            else:
+                print(f"❌ Contabo upload failed: {resp.status_code} - {resp.text[:200]}")
+                return None
+
+        except Exception as e:
+            print(f"❌ Contabo upload error: {e}")
+            return None
 
     def _classify_variant(self, path: str) -> str:
         p = path.lower()
