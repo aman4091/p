@@ -23,15 +23,17 @@ from supabase_client import SupabaseClient
 from transcribe_helper import get_youtube_transcript, SupaDataError
 from youtube_processor import YouTubeChannelProcessor, YouTubeProcessorError
 
-# Import Contabo credentials from parent p.py
+# Import Contabo credentials from /workspace/p.py (Vast.ai)
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if "/workspace" not in sys.path:
+    sys.path.insert(0, "/workspace")
 try:
     from p import CONTABO_URL, CONTABO_API_KEY
+    print(f"✅ Contabo credentials loaded: {CONTABO_URL}")
 except ImportError:
     CONTABO_URL = None
     CONTABO_API_KEY = None
-    print("⚠️ Contabo credentials not found in p.py")
+    print("⚠️ Contabo credentials not found in /workspace/p.py")
 # Load environment variables from .env file
 load_dotenv()
 
