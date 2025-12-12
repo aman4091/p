@@ -2669,10 +2669,11 @@ class WorkingF5Bot:
                 contabo_link = await self.upload_to_contabo(raw_output)
                 if contabo_link:
                     print(f"✅ Contabo upload successful: {contabo_link}")
-                    await send_msg(f"🔗 Contabo: {contabo_link}")
+                    await send_msg(f"✅ Contabo: {contabo_link}")
                     links.append(contabo_link)
                 else:
-                    print(f"⚠️ Contabo upload failed (optional)")
+                    print(f"❌ Contabo upload failed")
+                    await send_msg(f"❌ Contabo upload failed")
             else:
                 print(f"❌ Raw file not found: {raw_output}")
                 await send_msg(f"❌ Raw file not found")
