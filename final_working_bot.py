@@ -4739,8 +4739,9 @@ class WorkingF5Bot:
                 
                 # Store chat ID for chunk updates
                 self._current_chat_id = actual_chat_id
-                # Audio generate kariye (pass chat id)
-                success, output_files = await self.generate_audio_f5(script_text, actual_chat_id)
+                # Audio generate kariye (pass chat id and script name)
+                script_name = filename.replace('.txt', '') if filename else None
+                success, output_files = await self.generate_audio_f5(script_text, actual_chat_id, script_name=script_name)
                 # Cleanup chunk progress context
                 self._current_chat_id = None
                 
@@ -4834,7 +4835,7 @@ class WorkingF5Bot:
             except Exception as _e:
                 pass
     
-    async def generate_audio_f5(self, script_text, chat_id=None):
+    async def generate_audio_f5(self, script_text, chat_id=None, script_name=None):
         """F5-TTS API with PC-like parameters and processing"""
         try:
             # Optional chat context for progress updates
@@ -4843,10 +4844,15 @@ class WorkingF5Bot:
             print(f"🔄 F5-TTS generation starting...")
             print(f"📝 Script length: {len(script_text)} characters")
             print(f"🎵 Reference: {self.reference_audio}")
-            
-            # Create output filename
-            timestamp = int(time.time())
-            base_output_path = os.path.join(OUTPUT_DIR, f"generated_{timestamp}")
+
+            # Create output filename - use script name if provided, else timestamp
+            if script_name:
+                # Clean script name for filename
+                clean_name = re.sub(r'[^\w\-]', '_', script_name)
+                base_output_path = os.path.join(OUTPUT_DIR, clean_name)
+            else:
+                timestamp = int(time.time())
+                base_output_path = os.path.join(OUTPUT_DIR, f"generated_{timestamp}")
             raw_output = f"{base_output_path}_raw.wav"
             
             # Split text into chunks (configurable size)
