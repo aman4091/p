@@ -2657,25 +2657,15 @@ class WorkingF5Bot:
 
                 await send_msg(f"📤 Uploading {filename} ({size_mb} MB)...")
 
-                # Upload to Gofile
-                gofile_link = await self.upload_single_to_gofile(raw_output)
-                if gofile_link:
-                    print(f"✅ PixelDrain upload successful: {gofile_link}")
-                    await send_msg(f"🔗 PixelDrain: {gofile_link}")
-                    links.append(gofile_link)
+                # Upload to PixelDrain (Contabo link file uploaded automatically inside)
+                pixeldrain_link = await self.upload_single_to_gofile(raw_output)
+                if pixeldrain_link:
+                    print(f"✅ PixelDrain upload successful: {pixeldrain_link}")
+                    await send_msg(f"🔗 PixelDrain: {pixeldrain_link}")
+                    links.append(pixeldrain_link)
                 else:
                     print(f"❌ PixelDrain upload failed")
                     await send_msg(f"⚠️ PixelDrain upload failed")
-
-                # Upload to Contabo
-                contabo_link = await self.upload_to_contabo(raw_output)
-                if contabo_link:
-                    print(f"✅ Contabo upload successful: {contabo_link}")
-                    await send_msg(f"✅ Contabo: {contabo_link}")
-                    links.append(contabo_link)
-                else:
-                    print(f"❌ Contabo upload failed")
-                    await send_msg(f"❌ Contabo upload failed")
             else:
                 print(f"❌ Raw file not found: {raw_output}")
                 await send_msg(f"❌ Raw file not found")
