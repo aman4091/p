@@ -23,17 +23,19 @@ from supabase_client import SupabaseClient
 from transcribe_helper import get_youtube_transcript, SupaDataError
 from youtube_processor import YouTubeChannelProcessor, YouTubeProcessorError
 
-# Import Contabo credentials from /workspace/p.py (Vast.ai)
+# Import credentials from /workspace/p.py (Vast.ai)
 import sys
 if "/workspace" not in sys.path:
     sys.path.insert(0, "/workspace")
 try:
-    from p import CONTABO_URL, CONTABO_API_KEY
-    print(f"✅ Contabo credentials loaded: {CONTABO_URL}")
+    from p import CONTABO_URL, CONTABO_API_KEY, PIXELDRAIN_API_KEY
+    print(f"✅ Contabo: {CONTABO_URL}")
+    print(f"✅ PixelDrain: {'SET' if PIXELDRAIN_API_KEY else 'NOT SET'}")
 except ImportError:
     CONTABO_URL = None
     CONTABO_API_KEY = None
-    print("⚠️ Contabo credentials not found in /workspace/p.py")
+    PIXELDRAIN_API_KEY = None
+    print("⚠️ Credentials not found in /workspace/p.py")
 # Load environment variables from .env file
 load_dotenv()
 
@@ -5235,87 +5237,50 @@ class WorkingF5Bot:
 
     async def upload_single_to_gofile(self, file_path):
         """
-        Upload exactly one file to GoFile and return its download page URL.
-        Strategy:
-          1) Try new API:   https://upload.gofile.io/uploadfile
-          2) On 5xx/fail → fallback to legacy server flow:
-             - GET https://api.gofile.io/getServer
-             - POST https://{server}.gofile.io/uploadFile
-        Retries with exponential backoff.
+        Upload to PixelDrain instead of GoFile.
+        Returns download URL.
         """
-        token = os.getenv("GOFILE_TOKEN")  # optional
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        if not PIXELDRAIN_API_KEY:
+            print("❌ PixelDrain API key not configured")
+            return None
 
-        def _try_new_api():
-            with open(file_path, "rb") as f:
-                resp = requests.post(
-                    "https://upload.gofile.io/uploadfile",
-                    headers=headers,
-                    files={"file": f},
-                    timeout=1000,
-                )
-            return resp
+        filename = os.path.basename(file_path)
+        print(f"📤 Uploading to PixelDrain: {filename}")
 
-        def _try_legacy_api():
-            # Get server
-            srv = requests.get("https://api.gofile.io/getServer", timeout=15)
-            srv.raise_for_status()
-            server = srv.json().get("data", {}).get("server")
-            if not server:
-                raise RuntimeError("GoFile getServer returned no server.")
-            # Upload to that server
-            with open(file_path, "rb") as f:
-                resp = requests.post(
-                    f"https://{server}.gofile.io/uploadFile",
-                    headers=headers,
-                    files={"file": f},
-                    timeout=1000,
-                )
-            return resp
-
+        pixeldrain_link = None
         last_err = None
-        gofile_link = None
+
         for attempt in range(3):
             try:
-                # 1) New API
-                r = _try_new_api()
-                if r.status_code == 200 and r.headers.get("content-type","").startswith("application/json"):
-                    j = r.json()
-                    d = j.get("data", {}) if isinstance(j, dict) else {}
-                    link = d.get("downloadPage")
-                    if link:
-                        gofile_link = link
+                with open(file_path, "rb") as f:
+                    resp = requests.post(
+                        "https://pixeldrain.com/api/file",
+                        auth=("", PIXELDRAIN_API_KEY),
+                        files={"file": (filename, f)},
+                        timeout=600
+                    )
+
+                if resp.status_code == 201:
+                    data = resp.json()
+                    file_id = data.get("id")
+                    if file_id:
+                        pixeldrain_link = f"https://pixeldrain.com/u/{file_id}"
+                        print(f"✅ PixelDrain upload success: {pixeldrain_link}")
                         break
-                # Fall back if 5xx or missing link
-                # 2) Legacy server API
-                r = _try_legacy_api()
-                if r.status_code == 200 and r.headers.get("content-type","").startswith("application/json"):
-                    j = r.json()
-                    # legacy returns {"status":"ok","data":{"downloadPage": "..."}}
-                    if j.get("status") == "ok":
-                        d = j.get("data", {})
-                        link = d.get("downloadPage")
-                        if link:
-                            gofile_link = link
-                            break
-                last_err = f"GoFile upload failed (attempt {attempt+1}): {r.status_code} {r.text[:200]}"
+                else:
+                    last_err = f"PixelDrain failed (attempt {attempt+1}): {resp.status_code} {resp.text[:200]}"
             except Exception as e:
                 last_err = f"{type(e).__name__}: {e}"
-            # backoff
-            time.sleep(1.5 * (2 ** attempt))
+            time.sleep(2 * (attempt + 1))
 
-        if not gofile_link:
-            print(f"❌ GoFile single-upload error: {last_err}")
+        if not pixeldrain_link:
+            print(f"❌ PixelDrain upload error: {last_err}")
 
-        # Also upload to Contabo (only for raw files)
-        if "_raw.wav" in file_path:
-            contabo_link = await self.upload_to_contabo(file_path)
-            if contabo_link:
-                print(f"✅ Contabo: {contabo_link}")
-            else:
-                print(f"❌ Contabo upload failed for {os.path.basename(file_path)}")
+        # Upload link to Contabo as text file (only for raw files)
+        if "_raw.wav" in file_path and pixeldrain_link:
+            await self.upload_link_to_contabo(file_path, pixeldrain_link)
 
-        return gofile_link
+        return pixeldrain_link
 
     async def upload_to_contabo(self, file_path):
         """
@@ -5383,6 +5348,47 @@ class WorkingF5Bot:
             print(f"❌ Contabo upload error: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
+            return None
+
+    async def upload_link_to_contabo(self, audio_path, pixeldrain_link):
+        """
+        Upload a text file containing PixelDrain link to Contabo.
+        Text file name = audio_name_link.txt
+        """
+        if not CONTABO_URL or not CONTABO_API_KEY:
+            print("❌ Contabo credentials not configured")
+            return None
+
+        try:
+            # Create text filename from audio filename
+            audio_name = os.path.basename(audio_path)
+            # Replace _raw.wav with _link.txt
+            link_filename = audio_name.replace("_raw.wav", "_link.txt")
+
+            print(f"📤 Uploading link file to Contabo: {link_filename}")
+
+            # Create text file content
+            link_content = pixeldrain_link
+
+            # Upload as text file
+            upload_url = f"{CONTABO_URL}/upload/external-audio"
+
+            resp = requests.post(
+                upload_url,
+                headers={"x-api-key": CONTABO_API_KEY},
+                files={"file": (link_filename, link_content, "text/plain")},
+                timeout=60
+            )
+
+            if resp.status_code == 200:
+                print(f"✅ Contabo link file uploaded: {link_filename}")
+                return True
+            else:
+                print(f"❌ Contabo link upload failed: {resp.status_code} - {resp.text[:200]}")
+                return None
+
+        except Exception as e:
+            print(f"❌ Contabo link upload error: {e}")
             return None
 
     def _classify_variant(self, path: str) -> str:
