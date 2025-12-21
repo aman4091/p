@@ -2660,12 +2660,12 @@ class WorkingF5Bot:
                 # Upload to Gofile
                 gofile_link = await self.upload_single_to_gofile(raw_output)
                 if gofile_link:
-                    print(f"✅ Gofile upload successful: {gofile_link}")
-                    await send_msg(f"🔗 Gofile: {gofile_link}")
+                    print(f"✅ PixelDrain upload successful: {gofile_link}")
+                    await send_msg(f"🔗 PixelDrain: {gofile_link}")
                     links.append(gofile_link)
                 else:
-                    print(f"❌ Gofile upload failed")
-                    await send_msg(f"⚠️ Gofile upload failed")
+                    print(f"❌ PixelDrain upload failed")
+                    await send_msg(f"⚠️ PixelDrain upload failed")
 
                 # Upload to Contabo
                 contabo_link = await self.upload_to_contabo(raw_output)
@@ -5050,7 +5050,7 @@ class WorkingF5Bot:
 
     async def send_audio_variants(self, context, file_paths, script_text, chat_id=None, filename="Generated Audio"):
         """
-        Upload EACH variant individually to GoFile and send its link.
+        Upload EACH variant individually to PixelDrain and send its link.
         No folder, no zip. Per-file retry+fallback. If a file fails to upload and is < 50MB, send via Telegram.
         """
         try:
@@ -5121,7 +5121,7 @@ class WorkingF5Bot:
             return "Error"
     
     async def send_audio(self, context, audio_paths, script_text, chat_id=None, filename="Generated Audio"):
-        """Send 4 variants if small; else upload all 4 to GoFile (one link). Returns 'Sent via Telegram' or URL."""
+        """Send 4 variants if small; else upload all 4 to PixelDrain. Returns 'Sent via Telegram' or URL."""
         try:
             if chat_id is None:
                 chat_id = CHAT_ID
@@ -5160,14 +5160,14 @@ class WorkingF5Bot:
                 print("✅ All variants sent via Telegram")
                 return "Sent via Telegram"
 
-            # Too big: upload all 4 to one GoFile folder
-            print("🔄 One or more variants too large; uploading all 4 to a single GoFile link...")
+            # Too big: upload all 4 to PixelDrain
+            print("🔄 One or more variants too large; uploading to PixelDrain...")
             link = await self.upload_multiple_to_gofile(audio_paths)
             if link:
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
-                        f"✅ {filename} (4 variants) uploaded to GoFile.\n\n"
+                        f"✅ {filename} (4 variants) uploaded to PixelDrain.\n\n"
                         f"📊 Total size: {total_mb}MB\n"
                         f"🔗 Link: {link}\n\n"
                         f"📏 Script: {len(script_text)} chars\n"
@@ -5175,7 +5175,7 @@ class WorkingF5Bot:
                         f"⚡ Speed: {self.audio_speed}x"
                     ),
                 )
-                print("✅ GoFile link sent")
+                print("✅ PixelDrain link sent")
                 return link
 
             # If upload failed, still tell user where files are
@@ -5199,40 +5199,35 @@ class WorkingF5Bot:
     
     async def upload_multiple_to_gofile(self, file_paths):
         """
-        Upload multiple files to a SINGLE GoFile folder and return that folder's download page URL.
-        If GOFILE_TOKEN is set, we include it for better control/quota.
+        Upload multiple files to PixelDrain and return links.
         """
-        try:
-            token = os.getenv("GOFILE_TOKEN")  # optional
-            headers = {"Authorization": f"Bearer {token}"} if token else {}
-            folder_id = None
-            download_page = None
+        if not PIXELDRAIN_API_KEY:
+            print("❌ PixelDrain API key not configured")
+            return None
 
+        try:
+            links = []
             for path in file_paths:
                 if not os.path.exists(path):
                     continue
+                filename = os.path.basename(path)
                 with open(path, "rb") as f:
-                    data = {"folderId": folder_id} if folder_id else {}
-                    files = {"file": f}
                     resp = requests.post(
-                        "https://upload.gofile.io/uploadfile",
-                        headers=headers,
-                        data=data,
-                        files=files,
-                        timeout=1000
+                        "https://pixeldrain.com/api/file",
+                        auth=("", PIXELDRAIN_API_KEY),
+                        files={"file": (filename, f)},
+                        timeout=600
                     )
-                resp.raise_for_status()
-                j = resp.json()
-                # GoFile returns info in "data"
-                d = j.get("data", {}) if isinstance(j, dict) else {}
-                # First upload creates a folder; subsequent uploads reuse it
-                folder_id = d.get("folderId") or d.get("parentFolderId") or folder_id
-                # Keep the folder's download page (user-facing page listing all files)
-                download_page = download_page or d.get("downloadPage")
+                if resp.status_code == 201:
+                    data = resp.json()
+                    file_id = data.get("id")
+                    if file_id:
+                        links.append(f"https://pixeldrain.com/u/{file_id}")
 
-            return download_page
+            # Return first link or None
+            return links[0] if links else None
         except Exception as e:
-            print(f"❌ GoFile multi-upload error: {e}")
+            print(f"❌ PixelDrain multi-upload error: {e}")
             return None
 
     async def upload_single_to_gofile(self, file_path):
