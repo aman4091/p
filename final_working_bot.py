@@ -5261,9 +5261,9 @@ class WorkingF5Bot:
         if not pixeldrain_link:
             print(f"❌ PixelDrain upload error: {last_err}")
 
-        # Upload link to Contabo as text file (only for raw files)
-        if "_raw.wav" in file_path and pixeldrain_link:
-            await self.upload_link_to_contabo(file_path, pixeldrain_link)
+        # Upload audio to Contabo (only for raw files)
+        if "_raw.wav" in file_path:
+            await self.upload_to_contabo(file_path)
 
         return pixeldrain_link
 
