@@ -2657,15 +2657,15 @@ class WorkingF5Bot:
 
                 await send_msg(f"📤 Uploading {filename} ({size_mb} MB)...")
 
-                # Upload to PixelDrain (Contabo link file uploaded automatically inside)
-                pixeldrain_link = await self.upload_single_to_gofile(raw_output)
-                if pixeldrain_link:
-                    print(f"✅ PixelDrain upload successful: {pixeldrain_link}")
-                    await send_msg(f"🔗 PixelDrain: {pixeldrain_link}")
-                    links.append(pixeldrain_link)
+                # Upload to Contabo
+                contabo_link = await self.upload_single_to_gofile(raw_output)
+                if contabo_link:
+                    print(f"✅ Contabo upload successful: {contabo_link}")
+                    await send_msg(f"🔗 Contabo: {contabo_link}")
+                    links.append(contabo_link)
                 else:
-                    print(f"❌ PixelDrain upload failed")
-                    await send_msg(f"⚠️ PixelDrain upload failed")
+                    print(f"❌ Contabo upload failed")
+                    await send_msg(f"⚠️ Contabo upload failed")
             else:
                 print(f"❌ Raw file not found: {raw_output}")
                 await send_msg(f"❌ Raw file not found")
@@ -5040,7 +5040,7 @@ class WorkingF5Bot:
 
     async def send_audio_variants(self, context, file_paths, script_text, chat_id=None, filename="Generated Audio"):
         """
-        Upload EACH variant individually to PixelDrain and send its link.
+        Upload EACH variant individually to Contabo and send its link.
         No folder, no zip. Per-file retry+fallback. If a file fails to upload and is < 50MB, send via Telegram.
         """
         try:
@@ -5111,7 +5111,7 @@ class WorkingF5Bot:
             return "Error"
     
     async def send_audio(self, context, audio_paths, script_text, chat_id=None, filename="Generated Audio"):
-        """Send 4 variants if small; else upload all 4 to PixelDrain. Returns 'Sent via Telegram' or URL."""
+        """Send 4 variants if small; else upload all 4 to Contabo. Returns 'Sent via Telegram' or URL."""
         try:
             if chat_id is None:
                 chat_id = CHAT_ID
@@ -5150,14 +5150,14 @@ class WorkingF5Bot:
                 print("✅ All variants sent via Telegram")
                 return "Sent via Telegram"
 
-            # Too big: upload all 4 to PixelDrain
-            print("🔄 One or more variants too large; uploading to PixelDrain...")
+            # Too big: upload all 4 to Contabo
+            print("🔄 One or more variants too large; uploading to Contabo...")
             link = await self.upload_multiple_to_gofile(audio_paths)
             if link:
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=(
-                        f"✅ {filename} (4 variants) uploaded to PixelDrain.\n\n"
+                        f"✅ {filename} (4 variants) uploaded to Contabo.\n\n"
                         f"📊 Total size: {total_mb}MB\n"
                         f"🔗 Link: {link}\n\n"
                         f"📏 Script: {len(script_text)} chars\n"
@@ -5165,7 +5165,7 @@ class WorkingF5Bot:
                         f"⚡ Speed: {self.audio_speed}x"
                     ),
                 )
-                print("✅ PixelDrain link sent")
+                print("✅ Contabo link sent")
                 return link
 
             # If upload failed, still tell user where files are
@@ -5189,83 +5189,32 @@ class WorkingF5Bot:
     
     async def upload_multiple_to_gofile(self, file_paths):
         """
-        Upload multiple files to PixelDrain and return links.
+        Upload multiple files to Contabo and return first link.
         """
-        if not PIXELDRAIN_API_KEY:
-            print("❌ PixelDrain API key not configured")
-            return None
-
         try:
             links = []
             for path in file_paths:
                 if not os.path.exists(path):
                     continue
-                filename = os.path.basename(path)
-                with open(path, "rb") as f:
-                    resp = requests.post(
-                        "https://pixeldrain.com/api/file",
-                        auth=("", PIXELDRAIN_API_KEY),
-                        files={"file": (filename, f)},
-                        timeout=600
-                    )
-                if resp.status_code == 201:
-                    data = resp.json()
-                    file_id = data.get("id")
-                    if file_id:
-                        links.append(f"https://pixeldrain.com/u/{file_id}")
-
-            # Return first link or None
+                if "_raw.wav" in path:
+                    link = await self.upload_to_contabo(path)
+                    if link:
+                        links.append(link)
             return links[0] if links else None
         except Exception as e:
-            print(f"❌ PixelDrain multi-upload error: {e}")
+            print(f"❌ Contabo multi-upload error: {e}")
             return None
 
     async def upload_single_to_gofile(self, file_path):
         """
-        Upload to PixelDrain instead of GoFile.
-        Returns download URL.
+        Upload to Contabo only.
+        Returns Contabo download URL.
         """
-        if not PIXELDRAIN_API_KEY:
-            print("❌ PixelDrain API key not configured")
-            return None
-
-        filename = os.path.basename(file_path)
-        print(f"📤 Uploading to PixelDrain: {filename}")
-
-        pixeldrain_link = None
-        last_err = None
-
-        for attempt in range(3):
-            try:
-                with open(file_path, "rb") as f:
-                    resp = requests.post(
-                        "https://pixeldrain.com/api/file",
-                        auth=("", PIXELDRAIN_API_KEY),
-                        files={"file": (filename, f)},
-                        timeout=600
-                    )
-
-                if resp.status_code == 201:
-                    data = resp.json()
-                    file_id = data.get("id")
-                    if file_id:
-                        pixeldrain_link = f"https://pixeldrain.com/u/{file_id}"
-                        print(f"✅ PixelDrain upload success: {pixeldrain_link}")
-                        break
-                else:
-                    last_err = f"PixelDrain failed (attempt {attempt+1}): {resp.status_code} {resp.text[:200]}"
-            except Exception as e:
-                last_err = f"{type(e).__name__}: {e}"
-            time.sleep(2 * (attempt + 1))
-
-        if not pixeldrain_link:
-            print(f"❌ PixelDrain upload error: {last_err}")
-
-        # Upload audio to Contabo (only for raw files)
+        # Upload to Contabo (only for raw files)
         if "_raw.wav" in file_path:
-            await self.upload_to_contabo(file_path)
-
-        return pixeldrain_link
+            contabo_link = await self.upload_to_contabo(file_path)
+            return contabo_link
+        return None
 
     async def upload_to_contabo(self, file_path):
         """
